@@ -1,0 +1,31 @@
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+*.local
+private/
+secrets/
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa
+id_ed25519
+known_hosts
+
+# Runtime output
+*.log
+logs/
+run/
+tmp/
+
+# Local tooling and editor files
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
+.venv/
+__pycache__/
+.pytest_cache/
+.coverage
