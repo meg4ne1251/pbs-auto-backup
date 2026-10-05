@@ -122,8 +122,8 @@ def main():
         readiness(cfg)
         if not activity(cfg)["idle"]:
             raise StateError("PBS is busy")
-        print(json.dumps({"shutdown_requested": True}), flush=True)
         run("shutdown", "-h", "now", timeout=10)
+        print(json.dumps({"shutdown_requested": True}), flush=True)
 
 
 if __name__ == "__main__":

@@ -24,6 +24,10 @@ class ControlError(Exception):
     pass
 
 
+class RemoteCommandRejected(ControlError):
+    """The remote command ran and reported a failure."""
+
+
 def positive(cfg, key, default):
     value = cfg.get(key, default)
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
@@ -79,7 +83,10 @@ def ssh(cfg, command):
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise ControlError(f"SSH {command} failed: {exc}") from exc
     if result.returncode:
-        raise ControlError(f"SSH {command} failed: {result.stderr.strip()[:300]}")
+        error = f"SSH {command} failed: {result.stderr.strip()[:300]}"
+        if result.returncode != 255:
+            raise RemoteCommandRejected(error)
+        raise ControlError(error)
     try:
         return json.loads(result.stdout)
     except json.JSONDecodeError as exc:
@@ -157,7 +164,8 @@ def wol(cfg):
 
 def start(cfg):
     path = Path(cfg["state_dir"])
-    with lock(path / "operation.lock", 60):
+    # A stop holds this lock until its shutdown verification has finished.
+    with lock(path / "operation.lock", seconds(cfg, "shutdown_retry_seconds", 300) + 120):
         deadline = time.monotonic() + seconds(cfg, "startup_timeout_seconds", 600)
         next_wol = 0
         while time.monotonic() < deadline:
@@ -175,9 +183,17 @@ def start(cfg):
         raise ControlError("startup timeout; backup job is not retried")
 
 
-def in_backup_window(now):
-    minute = now.hour * 60 + now.minute
-    return 5 * 60 + 50 <= minute <= 6 * 60 + 30
+def in_shutdown_guard_window(now, shutdown_retry_seconds=300):
+    current = now.hour * 3600 + now.minute * 60 + now.second
+    # Leave time for SSH, the complete shutdown check, and the 05:50 start.
+    guard_seconds = shutdown_retry_seconds + 300
+    if guard_seconds >= 86400:
+        return True
+    begin = (5 * 3600 + 50 * 60 - guard_seconds) % 86400
+    end = 6 * 3600 + 31 * 60
+    if begin < end:
+        return begin <= current < end
+    return current >= begin or current < end
 
 
 def verify_poweroff(cfg, deadline):
@@ -206,9 +222,9 @@ def stop(cfg):
         attempts = 0
         LOG.info("monitor started; maintenance=%s", maintenance)
         while time.monotonic() < deadline:
-            if in_backup_window(dt.datetime.now()):
+            if in_shutdown_guard_window(dt.datetime.now(), seconds(cfg, "shutdown_retry_seconds", 300)):
                 if streak:
-                    LOG.info("backup window; idle streak reset")
+                    LOG.info("shutdown guard window; idle streak reset")
                 streak = 0
             else:
                 try:
@@ -226,7 +242,7 @@ def stop(cfg):
                     LOG.warning("state unknown; shutdown deferred: %s", exc)
                 if streak >= seconds(cfg, "idle_checks", 3):
                     with lock(path / "operation.lock", seconds(cfg, "startup_timeout_seconds", 600)):
-                        if in_backup_window(dt.datetime.now()):
+                        if in_shutdown_guard_window(dt.datetime.now(), seconds(cfg, "shutdown_retry_seconds", 300)):
                             streak = 0
                             continue
                         try:
@@ -234,25 +250,41 @@ def stop(cfg):
                                 LOG.info("activity appeared before shutdown")
                                 streak = 0
                                 continue
+                            if in_shutdown_guard_window(dt.datetime.now(), seconds(cfg, "shutdown_retry_seconds", 300)):
+                                streak = 0
+                                continue
                             LOG.info("requesting normal shutdown")
                             try:
-                                ssh(cfg, "shutdown")
+                                response = ssh(cfg, "shutdown")
+                                if (response != {"shutdown_requested": True}
+                                        or response["shutdown_requested"] is not True):
+                                    raise ControlError("unexpected shutdown result")
+                                outcome = "accepted"
+                            except RemoteCommandRejected as exc:
+                                LOG.warning("shutdown rejected; monitoring continues: %s", exc)
+                                streak = 0
+                                outcome = "rejected"
                             except ControlError as exc:
-                                # SSH commonly disconnects during a successful shutdown.
                                 LOG.warning("shutdown SSH result uncertain: %s", exc)
+                                outcome = "unknown"
                         except ControlError as exc:
                             LOG.warning("final state unknown; shutdown deferred: %s", exc)
                             streak = 0
                             continue
-                    attempts += 1
-                    check_deadline = min(deadline, time.monotonic() + seconds(cfg, "shutdown_retry_seconds", 300))
-                    if verify_poweroff(cfg, check_deadline):
-                        set_maintenance(cfg, False)
-                        return
-                    LOG.warning("PBS still responds after shutdown request %s", attempts)
-                    streak = 0
-                    if attempts >= seconds(cfg, "shutdown_attempts", 2):
-                        raise ControlError("shutdown retry limit reached; PBS left running")
+                        if outcome != "rejected":
+                            attempts += 1
+                            check_deadline = min(deadline, time.monotonic() + seconds(cfg, "shutdown_retry_seconds", 300))
+                            if verify_poweroff(cfg, check_deadline):
+                                if outcome == "accepted":
+                                    set_maintenance(cfg, False)
+                                else:
+                                    LOG.warning("PBS unreachable, but shutdown was unconfirmed; maintenance state retained")
+                                return
+                    if outcome != "rejected":
+                        LOG.warning("PBS still responds after shutdown request %s", attempts)
+                        streak = 0
+                        if attempts >= seconds(cfg, "shutdown_attempts", 2):
+                            raise ControlError("shutdown retry limit reached; PBS left running")
             time.sleep(min(seconds(cfg, "idle_interval_seconds", 60), max(0, deadline - time.monotonic())))
         LOG.warning("monitor deadline reached; PBS left running; maintenance=%s", maintenance)
 
