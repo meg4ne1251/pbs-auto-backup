@@ -1,0 +1,6 @@
+{
+  "pool": "backup-pool",
+  "dataset": "backup-pool/datastore",
+  "datastore": "backup",
+  "datastore_path": "/mnt/datastore/backup"
+}

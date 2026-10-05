@@ -1,0 +1,19 @@
+{
+  "pbs_host": "192.0.2.10",
+  "ssh_user": "root",
+  "ssh_key": "/root/.ssh/pbs-auto-backup",
+  "known_hosts": "/root/.ssh/known_hosts",
+  "mac": "02:00:00:00:00:10",
+  "wol_broadcast": "192.0.2.255",
+  "state_dir": "/var/lib/pbs-auto-backup",
+  "startup_timeout_seconds": 600,
+  "wol_retry_seconds": 120,
+  "idle_interval_seconds": 60,
+  "idle_checks": 3,
+  "normal_monitor_seconds": 21600,
+  "maintenance_monitor_seconds": 86400,
+  "handoff_wait_seconds": 600,
+  "shutdown_retry_seconds": 300,
+  "shutdown_attempts": 2,
+  "ping_interval_seconds": 10
+}
