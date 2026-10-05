@@ -29,7 +29,7 @@ def config(path):
     for key in ("pool", "dataset", "datastore", "datastore_path"):
         if not isinstance(value.get(key), str) or not value[key]:
             raise StateError(f"missing {key}")
-    if not value["dataset"].startswith(value["pool"] + "/"):
+    if value["dataset"] != value["pool"] and not value["dataset"].startswith(value["pool"] + "/"):
         raise StateError("dataset must belong to pool")
     if not os.path.isabs(value["datastore_path"]):
         raise StateError("datastore_path must be absolute")
@@ -122,7 +122,8 @@ def main():
         readiness(cfg)
         if not activity(cfg)["idle"]:
             raise StateError("PBS is busy")
-        run("shutdown", "-h", "now", timeout=10)
+        # Queue poweroff briefly so SSH can return a definite acknowledgement.
+        run("systemd-run", "--on-active=5s", "/usr/bin/systemctl", "poweroff", timeout=10)
         print(json.dumps({"shutdown_requested": True}), flush=True)
 
 

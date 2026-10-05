@@ -1,0 +1,2 @@
+50 5 * * * root umask 077; /usr/bin/python3 /opt/pbs-auto-backup/pve_controller.py start --config /etc/pbs-auto-backup/pve.json >>/var/log/pbs-auto-backup.log 2>&1
+30 6 * * * root umask 077; /usr/bin/python3 /opt/pbs-auto-backup/pve_controller.py stop --config /etc/pbs-auto-backup/pve.json >>/var/log/pbs-auto-backup.log 2>&1

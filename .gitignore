@@ -1,4 +1,7 @@
 # Local configuration and credentials
+/config/*.json
+!/config/*.example.json
+/validation/
 .env
 .env.*
 !.env.example

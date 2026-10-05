@@ -14,6 +14,13 @@ import pve_controller
 
 
 class AgentSafetyTests(unittest.TestCase):
+    def test_pool_root_can_be_datastore_dataset(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory, "pbs.json")
+            path.write_text(json.dumps({"pool": "backup-pool", "dataset": "backup-pool",
+                                        "datastore": "backup", "datastore_path": "/mnt/backup"}))
+            self.assertEqual(pbs_agent.config(path)["dataset"], "backup-pool")
+
     def test_shutdown_does_not_acknowledge_failed_command(self):
         output = io.StringIO()
         with (patch.object(sys, "argv", ["pbs_agent.py", "--config", "/unused", "shutdown"]),
@@ -25,6 +32,19 @@ class AgentSafetyTests(unittest.TestCase):
             with self.assertRaises(pbs_agent.StateError):
                 pbs_agent.main()
         self.assertEqual(output.getvalue(), "")
+
+    def test_shutdown_acknowledges_scheduled_poweroff(self):
+        output = io.StringIO()
+        with (patch.object(sys, "argv", ["pbs_agent.py", "--config", "/unused", "shutdown"]),
+              patch.object(pbs_agent, "config", return_value={}),
+              patch.object(pbs_agent, "readiness"),
+              patch.object(pbs_agent, "activity", return_value={"idle": True}),
+              patch.object(pbs_agent, "run") as run,
+              contextlib.redirect_stdout(output)):
+            pbs_agent.main()
+        run.assert_called_once_with("systemd-run", "--on-active=5s", "/usr/bin/systemctl",
+                                    "poweroff", timeout=10)
+        self.assertEqual(json.loads(output.getvalue()), {"shutdown_requested": True})
 
     def test_scan_states(self):
         prefix = "  pool: backup-pool\n state: ONLINE\n  scan: "
